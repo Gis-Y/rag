@@ -1,91 +1,111 @@
-Go 版派聪明（PaiSmart-Go）是一个企业级的 AI 知识库管理系统，采用 RAG 技术提供智能文档处理和检索能力。核心技术栈包括：
+# PaiSmart-Go
 
-- Go 1.23+、模块化目录：`cmd/` `internal/` `pkg/`；分层：`handler/service/repository`
-- 配置/日志/关停：Viper、Zap（结构化日志）、Gin + Context 优雅停机
-- Gin（路由分组/中间件）、Gorilla WebSocket（双向通信、增量写出、停止指令）
-- JWT（access/refresh）、基于 `org_tag` 的层级聚合，检索期过滤（should + minimum_should_match）
-- MySQL 8 + GORM（文件/分片/父子块/活动版本持久化）、Redis 7（分片进度）
-- MinIO：分片对象存储；单分片 Copy、多分片 Compose；合并后后台清理分片对象
-- Kafka（segmentio/kafka-go）：生产/消费、失败阈值重试、手动提交 offset
-- 任务解耦：`TaskProcessor` 接口承载解析/向量化/索引流水线
-- 常驻 Document Worker：PDF 使用 Docling/Tesseract OCR；Office 等格式通过 Tika 结构化解析，统一保存 IR 和来源
-- 分块策略：父子分块，结构边界零重叠；仅超长不可细分单元使用 Token 限长续片及有限重叠
-- Elasticsearch 8：KNN 语义召回 + BM25 rescore + 短语兜底 should；索引含 `userId/orgTag/isPublic`
-- Embedding：OpenAI 兼容协议，统一配置 Qwen3-Embedding-0.6B / 1024，需提供匹配服务和固定 tokenizer 版本
-- LLM：DeepSeek Chat 流式；可按同协议切换本地 Ollama
-- Docker 容器化：主 Compose 包含 MySQL/Redis/ES/Kafka/MinIO/Tika/Document Worker
-- 集中管理 LLM/Embedding/ES 等参数
+PaiSmart-Go（派聪明 Go 版）是一个支持组织权限的 RAG 知识库：上传文档后异步解析、分块并建立索引，用户可以检索文档，或通过流式对话获取带来源的回答。后端使用 Go，管理界面使用 Vue 3。
 
-它的目标是帮助企业和个人更高效地管理和利用知识库中的信息，支持多租户架构，允许用户通过自然语言查询知识库，并获得基于自身文档的 AI 生成响应。
+> 当前仓库提供**本地开发环境**：Docker Compose 启动中间件和 Document Worker，Go 后端与 Vue 前端在宿主机分别运行。它不是包含前后端的一键生产部署。
 
-![派聪明的前后端](https://cdn.tobebetterjavaer.com/stutymore/README-20251027092633.png)
+## 功能与处理流程
 
-系统允许用户：
+- 分片上传、断点续传、文件状态查询、预览、下载和重处理。
+- Document Worker 解析文档并按结构生成父子块；仅子块生成 Embedding 并写入 Elasticsearch。
+- Elasticsearch 混合检索，结合活动版本与 MySQL 权限复核，按组织标签控制可见范围。
+- WebSocket 流式问答，返回来源引用；支持会话、用户及组织标签管理。
 
-- 上传和管理各种类型的文档
-- 自动处理和索引文档内容
-- 使用自然语言查询知识库
-- 接收基于自身文档的 AI 生成响应
+```text
+上传 → MinIO 原件 + MySQL 任务 → Kafka → Document Worker 解析/分块
+     → Embedding → Elasticsearch 索引 → 检索/权限复核 → LLM 流式回答
+```
 
-## Java版派聪明的成绩
+## 技术与目录
 
-派聪明 Java 版是 8 月份上线的，截止到目前，已经取得了非常瞩目的成绩，我这里晒一下哈。
+| 目录 | 职责 |
+| --- | --- |
+| `cmd/server/` | Go 服务入口、依赖组装和路由 |
+| `internal/handler/`、`service/`、`repository/` | 接口、业务逻辑和数据访问 |
+| `internal/pipeline/`、`workers/document/` | 异步处理编排与文档解析/分块 |
+| `pkg/` | MySQL/Redis、MinIO、Kafka、ES、Embedding、LLM 等适配器 |
+| `frontend/` | Vue 3 + TypeScript + Vite 管理界面 |
+| `configs/`、`deployments/`、`docs/` | 应用配置、开发环境编排和详细文档 |
 
-![面渣逆袭+派聪明 拿下招银网络+科大讯飞](https://cdn.tobebetterjavaer.com/paicoding/03b3016a1c6dc9659fbc7791bca55ccd.png)
+服务端基于 Go 1.23（`go.mod` 指定 `go1.24.9` toolchain）、Gin 和 GORM；数据及基础设施为 MySQL 8、Redis 7、MinIO、Kafka、Elasticsearch 8、Tika。Embedding 使用 OpenAI 兼容接口；默认模型配置为 `Qwen/Qwen3-Embedding-0.6B`（1024 维），LLM 默认配置为 DeepSeek Chat。**模型服务和密钥不由 Compose 提供。**
 
-![](https://cdn.tobebetterjavaer.com/paicoding/2ad94e8464c1be3cd3b8fee947c2775c.png)
+## 本地启动
 
-![腾讯后端拿下，多亏派聪明+技术派](https://cdn.tobebetterjavaer.com/paicoding/b1b3a12367cfc625311bd175774d49fe.png)
+克隆仓库后在项目根目录运行以下命令，示例使用 PowerShell。准备好 Go、Node.js ≥ 18.20、pnpm ≥ 8.7、Docker Compose，并确保 Docker 有足够内存运行 ES（2 GiB）和 Worker（上限 6 GiB）。
 
-![网易拿下，多亏派聪明和面试官有的聊](https://cdn.tobebetterjavaer.com/paicoding/22b4c5e7b760f3be89315885438b9c16.png)
+### 配置环境变量
 
-![球友们对派聪明发自内心的认可](https://cdn.tobebetterjavaer.com/paicoding/c460dcb29244ec470106763f48c1d087.png)
+在启动 Compose 和 Go 的终端中设置同一组变量；如果另开终端启动后端，需要重新设置或通过本地私有脚本加载。将占位值替换为自己的凭据，**不要提交凭据到仓库**。
 
+```powershell
+$env:MYSQL_ROOT_PASSWORD = "<mysql-password>"
+$env:DATABASE_REDIS_PASSWORD = "<redis-password>"
+$env:MINIO_ACCESS_KEY_ID = "<minio-user>"
+$env:MINIO_SECRET_ACCESS_KEY = "<minio-password>"
+$env:DOCUMENT_WORKER_TOKEN = "<private-worker-token>"
+$env:DOCUMENT_TOKENIZER_REVISION = "<40-character-model-commit-sha>"
 
-说句真心话，看到这，就可以无脑冲这个项目了，因为这些，还只是冰山一角。扫下面的优惠券（或者长按自动识别）解锁派聪明源码和教程吧，[星球](https://javabetter.cn/zhishixingqiu/)目前定价 159 元/年，优惠完只需要 129 元，每天不到 0.35 元，绝对的超值。
+$env:DATABASE_MYSQL_DSN = "root:<mysql-password>@tcp(127.0.0.1:3307)/PaiSmart?charset=utf8mb4&parseTime=True&loc=Local"
+$env:JWT_SECRET = "<at-least-32-characters>"
+$env:EMBEDDING_BASE_URL = "http://127.0.0.1:<port>/v1"
+$env:LLM_API_KEY = "<deepseek-api-key>"
+# Embedding 服务要求鉴权时，再设置 EMBEDDING_API_KEY。
+```
 
-![派聪明优惠券](https://cdn.tobebetterjavaer.com/paicoding/97601d7a337d7d944b02bb4a79cd6430.png)
+`DOCUMENT_TOKENIZER_REVISION` 必须是所选模型仓库的固定 40 位提交 SHA，不能写 `main`。Worker 的 tokenizer、后端 Embedding 模型和实际 Embedding 服务必须一致；更换模型还要核对向量维度。若使用其他 OpenAI 兼容 LLM，可通过 `LLM_BASE_URL`、`LLM_MODEL` 和 `LLM_API_KEY` 覆盖默认值。配置项及模型准备细节见 [文档处理说明](docs/document-processing-v1.md)。
 
->派聪明如何写到简历上：[https://paicoding.com/column/10/2](https://paicoding.com/column/10/2)
+### 启动本地依赖
 
-![派聪明如何写到简历上](https://cdn.tobebetterjavaer.com/stutymore/README-20251027094034.png)
+```powershell
+docker compose -f deployments/docker-compose.yaml up -d --build
+docker compose -f deployments/docker-compose.yaml ps
+```
 
-## 后端启动
+Compose 启动 MySQL、Redis、MinIO、Kafka、Elasticsearch、Tika 和 Document Worker，**不启动 Go 后端、Vue 前端或 Embedding/LLM 服务**。首次构建与模型下载可能较久；Worker 的 `/health` 只表示进程存活，不保证模型已预热。默认宿主机端口：MySQL `3307`、Redis `6380`、MinIO `9000/9001`、Kafka `9092`、ES `9200`、Tika `9998`、Worker `8091`。
 
-可 Docker 容器化一键部署前置环境，教程见：[派聪明环境部署教程](https://paicoding.com/column/10/29)。
+### 后端启动
 
-![Docker 拉取前置环境](https://cdn.tobebetterjavaer.com/stutymore/README-20251027093622.png)
+```powershell
+go run cmd/server/main.go
+```
 
-文档处理只支持结构化新链路。先按 [文档处理配置](docs/document-processing-v1.md) 配置 Worker token、固定 tokenizer revision 和对应 Embedding 服务地址，并初始化文档表，再启动主 Compose 和后端。缺少必需配置会直接报错，不会退回旧模式。后端默认监听 8081 端口。
+后端默认监听 `http://localhost:8081`。新 MySQL 数据卷会通过 [docs/ddl.sql](docs/ddl.sql) 初始化；已有数据库**不会自动迁移**，应按 [文档处理说明](docs/document-processing-v1.md#开发环境配置) 应用缺失的迁移。启动时会检查所需表和字段；缺少 Worker token、固定 tokenizer revision、Embedding 地址或模型不一致也会直接报错。
 
-仓库配置不保存凭据。启动 Compose 前必须设置 `MYSQL_ROOT_PASSWORD`、`DATABASE_REDIS_PASSWORD`、`MINIO_ACCESS_KEY_ID`、`MINIO_SECRET_ACCESS_KEY`、`DOCUMENT_WORKER_TOKEN` 和 `DOCUMENT_TOKENIZER_REVISION`，这些变量均无默认秘密值；同一组 Redis 和 MinIO 变量直接供后端使用。默认模型可分别通过 `DOCUMENT_TOKENIZER_ID` 和 `DOCUMENT_EMBEDDING_MODEL` 覆盖，二者必须一致。后端还需设置 `JWT_SECRET`（不少于 32 字符）、`DATABASE_MYSQL_DSN`，以及所选模型需要的 `LLM_API_KEY` / `EMBEDDING_API_KEY`。
+### 前端启动
 
-一般配置项按“层级中的点替换为下划线”映射环境变量；文档处理配置显式绑定到 Compose 使用的同一组 `DOCUMENT_WORKER_TOKEN`、`DOCUMENT_TOKENIZER_ID`、`DOCUMENT_TOKENIZER_REVISION` 和 `DOCUMENT_EMBEDDING_MODEL`。
+在另一个终端运行：
 
-系统不创建默认或演示账号。首次部署时先通过注册页面创建管理员本人账号，再由数据库管理员执行以下语句提升该账号；请把占位用户名替换为实际用户名：
+```powershell
+cd frontend
+pnpm install
+pnpm run dev
+```
+
+访问终端输出的 Vite 地址。开发环境接口在 [frontend/.env.test](frontend/.env.test) 中指向 `http://localhost:8081/api/v1`；本机后端端口变化时需要同步调整。系统不提供默认账号，先在注册页创建账号。如需管理员权限，由数据库管理员确认账号后执行：
 
 ```sql
 UPDATE users SET role = 'ADMIN' WHERE username = 'your_admin';
 ```
 
-已有部署需单独删除或重置旧演示账号，并轮换曾写入仓库的数据库、存储、JWT 和模型凭据；修改配置不会撤销泄露的凭据，也不会清除 Git 历史。已有 MySQL 数据卷不会因修改 `MYSQL_ROOT_PASSWORD` 自动改密，须由数据库管理员在实例内完成轮换。升级前按 [文档处理配置](docs/document-processing-v1.md) 应用缺失的迁移；本次代码修改未操作现有数据库、凭据或数据卷。
+## 验证
 
-![后端启动](https://cdn.tobebetterjavaer.com/stutymore/README-20251027093531.png)
-
-
-## 前端启动
-
-```bash
-# 进入前端项目目录
+```powershell
+go test ./...
+python -m unittest discover -s workers/document -p 'test_*.py' -v
 cd frontend
-
-# 安装依赖
-pnpm install
-
-# 启动项目
-pnpm run dev
+pnpm run typecheck
+pnpm run build
 ```
 
-聊天助手的访问效果如下图所示：
+Worker 单测需要本机 Python 及 [依赖](workers/document/requirements.txt)。这些检查命令不代表外部服务、OCR、Embedding/LLM 和完整端到端流程已经在你的环境通过。前端 `lint` 脚本带 `--fix`，会修改文件，运行前请确认工作区状态。
 
-![Go 版派聪明的运行后效果](https://cdn.tobebetterjavaer.com/paicoding/754665f76be3ff5b0a65b684377a4d1e.png)
+## 部署与安全边界
+
+当前 Compose 面向本地开发：服务端口只绑定本机，ES 关闭了安全认证，且没有编排 Go 后端和前端。**不要原样暴露到公网作为生产环境。**生产上线需自行补齐镜像/反向代理、TLS、访问控制、凭据管理、持久化备份、监控和资源规划。修改环境变量不会自动轮换已有数据库密码，也不会迁移现有数据卷；如果旧版本曾提交真实凭据，还需轮换凭据并检查 Git 历史。
+
+## 进一步阅读
+
+- [文档处理、模型一致性与迁移](docs/document-processing-v1.md)
+- [Document Worker 使用与限制](workers/document/README.md)
+- [查询理解](docs/query-understanding.md)
+- [对话记忆](docs/conversation-memory.md)
